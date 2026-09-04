@@ -1102,7 +1102,7 @@ func TestHashWithSingleKeyScanFillCache(t *testing.T) {
 	srv := util.StartServer(t, map[string]string{
 		"rocksdb.read_options.single_key_scan_fill_cache": "yes",
 		"rocksdb.share_metadata_and_subkey_block_cache":   "no",
-		"rocksdb.metadata_block_cache_size":               "64",
+		"rocksdb.metadata_block_cache_size":               "16",
 		"rocksdb.subkey_block_cache_size":                 "64",
 	})
 	defer srv.Close()
@@ -1197,5 +1197,7 @@ func TestHashWithSingleKeyScanFillCache(t *testing.T) {
 		total := blockCacheUsage("block_cache_usage")
 		require.EqualValues(t, total, blockCacheUsage("block_cache_usage[default]")+blockCacheUsage("block_cache_usage[metadata]"))
 		require.Greater(t, blockCacheUsage("block_cache_usage[metadata]"), int64(0))
+		require.EqualValues(t, 16*1024*1024, blockCacheUsage("block_cache_capacity[metadata]"))
+		require.EqualValues(t, 64*1024*1024, blockCacheUsage("block_cache_capacity[default]"))
 	})
 }

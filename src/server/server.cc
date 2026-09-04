@@ -1028,11 +1028,17 @@ Server::InfoEntries Server::GetRocksDBInfo() {
     db->GetIntProperty(subkey_cf_handle, rocksdb::DB::Properties::kBlockCachePinnedUsage, &block_cache_pinned_usage);
     entries.emplace_back("block_cache_pinned_usage[" + subkey_cf_handle->GetName() + "]", block_cache_pinned_usage);
     if (!config_->rocks_db.share_metadata_and_subkey_block_cache) {
-      uint64_t metadata_block_cache_usage = 0;
+      uint64_t metadata_block_cache_usage = 0, subkey_block_cache_capacity = 0, metadata_block_cache_capacity = 0;
       auto metadata_cf_handle = storage->GetCFHandle(ColumnFamilyID::Metadata);
       db->GetIntProperty(metadata_cf_handle, rocksdb::DB::Properties::kBlockCacheUsage, &metadata_block_cache_usage);
+      db->GetIntProperty(subkey_cf_handle, rocksdb::DB::Properties::kBlockCacheCapacity, &subkey_block_cache_capacity);
+      db->GetIntProperty(metadata_cf_handle, rocksdb::DB::Properties::kBlockCacheCapacity,
+                         &metadata_block_cache_capacity);
       entries.emplace_back("block_cache_usage[" + subkey_cf_handle->GetName() + "]", block_cache_usage);
       entries.emplace_back("block_cache_usage[" + metadata_cf_handle->GetName() + "]", metadata_block_cache_usage);
+      entries.emplace_back("block_cache_capacity[" + subkey_cf_handle->GetName() + "]", subkey_block_cache_capacity);
+      entries.emplace_back("block_cache_capacity[" + metadata_cf_handle->GetName() + "]",
+                           metadata_block_cache_capacity);
       block_cache_usage += metadata_block_cache_usage;
     }
     entries.emplace_back("block_cache_usage", block_cache_usage);

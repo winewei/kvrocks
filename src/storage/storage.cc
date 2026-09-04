@@ -327,6 +327,11 @@ Status Storage::Open(DBOpenMode mode) {
   } else {
     // Dedicated caches keep the small, hot metadata blocks from being evicted
     // by the much larger subkey working set. block_cache_size is ignored here.
+    if (metadata_block_cache_size == 0 || subkey_block_cache_size == 0) {
+      return {Status::NotOK,
+              "rocksdb.metadata_block_cache_size and rocksdb.subkey_block_cache_size must be greater than 0 "
+              "when rocksdb.share_metadata_and_subkey_block_cache is no"};
+    }
     shared_block_cache_ = new_block_cache(subkey_block_cache_size);
     metadata_block_cache_ = new_block_cache(metadata_block_cache_size);
     info("[storage] block cache: metadata column family {} MiB, other column families {} MiB",

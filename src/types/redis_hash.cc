@@ -258,10 +258,9 @@ rocksdb::Status Hash::MSet(engine::Context &ctx, const Slice &user_key, const st
   if (!s.ok()) return s;
   std::unordered_set<std::string_view> field_set;
 
-  std::vector<rocksdb::Slice> keys;
   std::vector<std::string> keys_encoded;
   std::vector<std::string_view> values;
-  keys.reserve(field_values.size());
+  keys_encoded.reserve(field_values.size());
   values.reserve(field_values.size());
   for (auto it = field_values.rbegin(); it != field_values.rend(); it++) {
     if (!field_set.insert(it->field).second) {
@@ -269,13 +268,17 @@ rocksdb::Status Hash::MSet(engine::Context &ctx, const Slice &user_key, const st
     }
 
     keys_encoded.push_back(InternalKey(ns_key, it->field, metadata.version, storage_->IsSlotIdEncoded()).Encode());
-    keys.emplace_back(keys_encoded.back());
     values.emplace_back(it->value);
   }
+  // Slices are created only after keys_encoded stops growing, so they can never
+  // dangle because of a vector reallocation moving short (SSO) strings.
+  std::vector<rocksdb::Slice> keys(keys_encoded.begin(), keys_encoded.end());
 
-  std::vector<rocksdb::PinnableSlice> values_vector(keys.size());
-  std::vector<rocksdb::Status> statuses_vector(keys.size());
+  std::vector<rocksdb::PinnableSlice> values_vector;
+  std::vector<rocksdb::Status> statuses_vector;
   if (metadata.size > 0) {
+    values_vector.resize(keys.size());
+    statuses_vector.resize(keys.size());
     rocksdb::ReadOptions read_options = ctx.DefaultMultiGetOptions();
     storage_->MultiGet(ctx, read_options, storage_->GetDB()->DefaultColumnFamily(), keys.size(), keys.data(),
                        values_vector.data(), statuses_vector.data());
@@ -334,7 +337,7 @@ rocksdb::Status Hash::RangeByLex(engine::Context &ctx, const Slice &user_key, co
   std::string prefix_key = InternalKey(ns_key, "", metadata.version, storage_->IsSlotIdEncoded()).Encode();
   std::string next_version_prefix_key =
       InternalKey(ns_key, "", metadata.version + 1, storage_->IsSlotIdEncoded()).Encode();
-  rocksdb::ReadOptions read_options = ctx.DefaultSingleKeyScanOptions();
+  rocksdb::ReadOptions read_options = ctx.DefaultScanOptions();
   rocksdb::Slice upper_bound(next_version_prefix_key);
   read_options.iterate_upper_bound = &upper_bound;
   rocksdb::Slice lower_bound(prefix_key);
@@ -388,7 +391,7 @@ rocksdb::Status Hash::GetAll(engine::Context &ctx, const Slice &user_key, std::v
   std::string next_version_prefix_key =
       InternalKey(ns_key, "", metadata.version + 1, storage_->IsSlotIdEncoded()).Encode();
 
-  rocksdb::ReadOptions read_options = ctx.DefaultSingleKeyScanOptions();
+  rocksdb::ReadOptions read_options = ctx.DefaultSingleKeyScanOptions(metadata.size);
   rocksdb::Slice upper_bound(next_version_prefix_key);
   read_options.iterate_upper_bound = &upper_bound;
 

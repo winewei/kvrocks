@@ -225,7 +225,7 @@ class Storage {
   bool IsEmptyDB();
   void EmptyDB();
   rocksdb::BlockBasedTableOptions InitTableOptions();
-  void SetBlobDB(rocksdb::ColumnFamilyOptions *cf_options);
+  void SetBlobDB(rocksdb::ColumnFamilyOptions *cf_options, const std::shared_ptr<rocksdb::Cache> &block_cache);
   rocksdb::Options InitRocksDBOptions();
   Status SetOptionForAllColumnFamilies(const std::string &key, const std::string &value);
   Status SetOptionForAllColumnFamilies(const std::unordered_map<std::string, std::string> &options_map);
@@ -263,10 +263,11 @@ class Storage {
   const rocksdb::WriteOptions &DefaultWriteOptions() const { return default_write_opts_; }
   rocksdb::ReadOptions DefaultScanOptions() const;
   /// DefaultSingleKeyScanOptions is for iterators bounded to the sub keys of one
-  /// user key (e.g. HGETALL, SMEMBERS). Unlike DefaultScanOptions, whether the
-  /// data blocks are inserted into the block cache is controlled by
-  /// rocksdb.read_options.single_key_scan_fill_cache.
-  rocksdb::ReadOptions DefaultSingleKeyScanOptions() const;
+  /// user key (e.g. HGETALL, SMEMBERS). Unlike DefaultScanOptions, the data blocks
+  /// are inserted into the block cache when rocksdb.read_options.single_key_scan_fill_cache
+  /// is enabled and the object has at most single_key_scan_fill_cache_max_size sub keys,
+  /// so one huge object can never flush the whole cache.
+  rocksdb::ReadOptions DefaultSingleKeyScanOptions(uint64_t object_size) const;
   rocksdb::ReadOptions DefaultMultiGetOptions() const;
 
   [[nodiscard]] rocksdb::Status Write(engine::Context &ctx, const rocksdb::WriteOptions &options,
@@ -451,8 +452,8 @@ struct Context {
   [[nodiscard]] rocksdb::ReadOptions DefaultScanOptions();
   /// DefaultSingleKeyScanOptions returns a DefaultSingleKeyScanOptions, and if txn_context_enabled = true,
   /// then its snapshot is specified by the Context.
-  /// Otherwise it is the same as Storage::DefaultSingleKeyScanOptions().
-  [[nodiscard]] rocksdb::ReadOptions DefaultSingleKeyScanOptions();
+  /// Otherwise it is the same as Storage::DefaultSingleKeyScanOptions(object_size).
+  [[nodiscard]] rocksdb::ReadOptions DefaultSingleKeyScanOptions(uint64_t object_size);
   /// DefaultMultiGetOptions returns a DefaultMultiGetOptions, and if txn_context_enabled = true,
   /// then its snapshot is specified by the Context.
   /// Otherwise it is the same as Storage::DefaultMultiGetOptions

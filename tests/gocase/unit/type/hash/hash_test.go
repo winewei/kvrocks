@@ -1112,6 +1112,19 @@ func TestHashWithSingleKeyScanFillCache(t *testing.T) {
 
 	ctx := context.Background()
 
+	blockCacheUsage := func(field string) int64 {
+		info := rdb.Info(ctx, "rocksdb").Val()
+		for _, line := range strings.Split(info, "\n") {
+			if kv := strings.SplitN(strings.TrimSpace(line), ":", 2); len(kv) == 2 && kv[0] == field {
+				v, err := strconv.ParseInt(kv[1], 10, 64)
+				require.NoError(t, err)
+				return v
+			}
+		}
+		require.Failf(t, "missing INFO field", "%s not found in INFO rocksdb", field)
+		return 0
+	}
+
 	t.Run("HGETALL results are identical before and after flush/compaction", func(t *testing.T) {
 		expected := make(map[string]map[string]string)
 		for i := 0; i < 200; i++ {
@@ -1129,6 +1142,10 @@ func TestHashWithSingleKeyScanFillCache(t *testing.T) {
 
 		require.NoError(t, rdb.Do(ctx, "COMPACT").Err())
 		time.Sleep(2 * time.Second)
+		// Drop everything the writes and the first reads left in the caches so the
+		// growth measured below can only come from the HGETALL scans.
+		require.NoError(t, rdb.Do(ctx, "FLUSHBLOCKCACHE").Err())
+		subkeyUsageBefore := blockCacheUsage("block_cache_usage[default]")
 
 		for key, fields := range expected {
 			// The second read of the same key is served from the block cache after
@@ -1137,6 +1154,26 @@ func TestHashWithSingleKeyScanFillCache(t *testing.T) {
 			require.EqualValues(t, fields, rdb.HGetAll(ctx, key).Val())
 			require.Len(t, rdb.HKeys(ctx, key).Val(), len(fields))
 		}
+		require.Greater(t, blockCacheUsage("block_cache_usage[default]"), subkeyUsageBefore,
+			"single_key_scan_fill_cache=yes must insert the scanned subkey data blocks into the block cache")
+	})
+
+	t.Run("objects above single_key_scan_fill_cache_max_size do not fill the cache", func(t *testing.T) {
+		key := "large-hash"
+		fields := map[string]string{}
+		for i := 0; i < 64; i++ {
+			fields[fmt.Sprintf("field-%03d", i)] = util.RandString(64, 128, util.Alpha)
+		}
+		require.NoError(t, rdb.HSet(ctx, key, fields).Err())
+		require.NoError(t, rdb.ConfigSet(ctx, "rocksdb.read_options.single_key_scan_fill_cache_max_size", "8").Err())
+		require.NoError(t, rdb.Do(ctx, "COMPACT").Err())
+		time.Sleep(2 * time.Second)
+		require.NoError(t, rdb.Do(ctx, "FLUSHBLOCKCACHE").Err())
+		before := blockCacheUsage("block_cache_usage[default]")
+		require.Len(t, rdb.HGetAll(ctx, key).Val(), 64)
+		require.EqualValues(t, before, blockCacheUsage("block_cache_usage[default]"),
+			"a hash larger than the guard must be scanned with fill_cache=false")
+		require.NoError(t, rdb.ConfigSet(ctx, "rocksdb.read_options.single_key_scan_fill_cache_max_size", "1024").Err())
 	})
 
 	t.Run("overwriting an existing hash still reports added count correctly", func(t *testing.T) {
@@ -1156,8 +1193,9 @@ func TestHashWithSingleKeyScanFillCache(t *testing.T) {
 		require.Len(t, rdb.HGetAll(ctx, "small-hash-overwrite").Val(), 3)
 	})
 
-	t.Run("INFO reports the dedicated metadata block cache", func(t *testing.T) {
-		info := rdb.Info(ctx, "rocksdb").Val()
-		require.Contains(t, info, "block_cache_usage[metadata]")
+	t.Run("INFO reports both caches and their total", func(t *testing.T) {
+		total := blockCacheUsage("block_cache_usage")
+		require.EqualValues(t, total, blockCacheUsage("block_cache_usage[default]")+blockCacheUsage("block_cache_usage[metadata]"))
+		require.Greater(t, blockCacheUsage("block_cache_usage[metadata]"), int64(0))
 	})
 }

@@ -128,9 +128,11 @@ rocksdb::ReadOptions Storage::DefaultScanOptions() const {
   return read_options;
 }
 
-rocksdb::ReadOptions Storage::DefaultSingleKeyScanOptions() const {
+rocksdb::ReadOptions Storage::DefaultSingleKeyScanOptions(uint64_t object_size) const {
   rocksdb::ReadOptions read_options = DefaultScanOptions();
-  read_options.fill_cache = config_->rocks_db.read_options.single_key_scan_fill_cache;
+  const auto &opts = config_->rocks_db.read_options;
+  read_options.fill_cache =
+      opts.single_key_scan_fill_cache && object_size <= static_cast<uint64_t>(opts.single_key_scan_fill_cache_max_size);
 
   return read_options;
 }
@@ -156,9 +158,9 @@ rocksdb::BlockBasedTableOptions Storage::InitTableOptions() {
   return table_options;
 }
 
-void Storage::SetBlobDB(rocksdb::ColumnFamilyOptions *cf_options) {
+void Storage::SetBlobDB(rocksdb::ColumnFamilyOptions *cf_options, const std::shared_ptr<rocksdb::Cache> &block_cache) {
   cf_options->enable_blob_files = config_->rocks_db.enable_blob_files;
-  cf_options->blob_cache = config_->enable_blob_cache ? shared_block_cache_ : nullptr;
+  cf_options->blob_cache = config_->enable_blob_cache ? block_cache : nullptr;
   cf_options->min_blob_size = config_->rocks_db.min_blob_size;
   cf_options->blob_file_size = config_->rocks_db.blob_file_size;
   cf_options->blob_compression_type = config_->rocks_db.compression;
@@ -321,11 +323,34 @@ Status Storage::Open(DBOpenMode mode) {
   if (config_->rocks_db.share_metadata_and_subkey_block_cache) {
     shared_block_cache_ = new_block_cache(block_cache_size);
     metadata_block_cache_ = shared_block_cache_;
+    info("[storage] block cache: shared by all column families, capacity {} MiB", block_cache_size / MiB);
   } else {
     // Dedicated caches keep the small, hot metadata blocks from being evicted
     // by the much larger subkey working set. block_cache_size is ignored here.
     shared_block_cache_ = new_block_cache(subkey_block_cache_size);
     metadata_block_cache_ = new_block_cache(metadata_block_cache_size);
+    info("[storage] block cache: metadata column family {} MiB, other column families {} MiB",
+         metadata_block_cache_size / MiB, subkey_block_cache_size / MiB);
+    if (config_->rocks_db.block_cache_size != 0) {
+      warn(
+          "[storage] rocksdb.block_cache_size ({} MiB) is ignored because "
+          "rocksdb.share_metadata_and_subkey_block_cache is no; the effective capacities are "
+          "rocksdb.metadata_block_cache_size and rocksdb.subkey_block_cache_size",
+          config_->rocks_db.block_cache_size);
+    }
+  }
+  if (config_->rocks_db.read_options.single_key_scan_fill_cache) {
+    if (config_->rocks_db.share_metadata_and_subkey_block_cache) {
+      warn(
+          "[storage] rocksdb.read_options.single_key_scan_fill_cache is enabled with a shared block cache: "
+          "cached subkey data blocks will compete with metadata blocks, consider "
+          "rocksdb.share_metadata_and_subkey_block_cache no");
+    }
+    if (config_->rocks_db.block_cache_type != BlockCacheType::kCacheTypeLRU) {
+      warn(
+          "[storage] rocksdb.read_options.single_key_scan_fill_cache is enabled with the hcc block cache, "
+          "which does not strictly enforce cache priorities and may let data blocks evict index/filter blocks");
+    }
   }
 
   rocksdb::BlockBasedTableOptions metadata_table_opts = InitTableOptions();
@@ -343,7 +368,7 @@ Status Storage::Open(DBOpenMode mode) {
   metadata_opts.memtable_prefix_bloom_size_ratio = 0.1;
   metadata_opts.table_properties_collector_factories.emplace_back(
       NewCompactOnExpiredTableCollectorFactory(std::string(kMetadataColumnFamilyName), 0.3));
-  SetBlobDB(&metadata_opts);
+  SetBlobDB(&metadata_opts, metadata_block_cache_);
 
   rocksdb::BlockBasedTableOptions subkey_table_opts = InitTableOptions();
   subkey_table_opts.block_cache = shared_block_cache_;
@@ -356,35 +381,35 @@ Status Storage::Open(DBOpenMode mode) {
   subkey_opts.disable_auto_compactions = config_->rocks_db.disable_auto_compactions;
   subkey_opts.table_properties_collector_factories.emplace_back(
       NewCompactOnExpiredTableCollectorFactory(std::string(kPrimarySubkeyColumnFamilyName), 0.3));
-  SetBlobDB(&subkey_opts);
+  SetBlobDB(&subkey_opts, shared_block_cache_);
 
   rocksdb::BlockBasedTableOptions pubsub_table_opts = InitTableOptions();
   rocksdb::ColumnFamilyOptions pubsub_opts(options);
   pubsub_opts.table_factory.reset(rocksdb::NewBlockBasedTableFactory(pubsub_table_opts));
   pubsub_opts.compaction_filter_factory = std::make_shared<PubSubFilterFactory>();
   pubsub_opts.disable_auto_compactions = config_->rocks_db.disable_auto_compactions;
-  SetBlobDB(&pubsub_opts);
+  SetBlobDB(&pubsub_opts, shared_block_cache_);
 
   rocksdb::BlockBasedTableOptions propagate_table_opts = InitTableOptions();
   rocksdb::ColumnFamilyOptions propagate_opts(options);
   propagate_opts.table_factory.reset(rocksdb::NewBlockBasedTableFactory(propagate_table_opts));
   propagate_opts.compaction_filter_factory = std::make_shared<PropagateFilterFactory>();
   propagate_opts.disable_auto_compactions = config_->rocks_db.disable_auto_compactions;
-  SetBlobDB(&propagate_opts);
+  SetBlobDB(&propagate_opts, shared_block_cache_);
 
   rocksdb::BlockBasedTableOptions search_table_opts = InitTableOptions();
   rocksdb::ColumnFamilyOptions search_opts(options);
   search_opts.table_factory.reset(rocksdb::NewBlockBasedTableFactory(search_table_opts));
   search_opts.compaction_filter_factory = std::make_shared<SearchFilterFactory>(this);
   search_opts.disable_auto_compactions = config_->rocks_db.disable_auto_compactions;
-  SetBlobDB(&search_opts);
+  SetBlobDB(&search_opts, shared_block_cache_);
 
   rocksdb::BlockBasedTableOptions index_table_opts = InitTableOptions();
   rocksdb::ColumnFamilyOptions index_opts(options);
   index_opts.table_factory.reset(rocksdb::NewBlockBasedTableFactory(index_table_opts));
   index_opts.compaction_filter_factory = std::make_shared<IndexFilterFactory>(this);
   index_opts.disable_auto_compactions = config_->rocks_db.disable_auto_compactions;
-  SetBlobDB(&index_opts);
+  SetBlobDB(&index_opts, shared_block_cache_);
 
   std::vector<rocksdb::ColumnFamilyDescriptor> column_families;
   // Caution: don't change the order of column family, or the handle will be mismatched
@@ -1428,8 +1453,8 @@ bool Storage::ReplDataManager::FileExists(Storage *storage, const std::string &d
   return read_options;
 }
 
-[[nodiscard]] rocksdb::ReadOptions Context::DefaultSingleKeyScanOptions() {
-  rocksdb::ReadOptions read_options = storage->DefaultSingleKeyScanOptions();
+[[nodiscard]] rocksdb::ReadOptions Context::DefaultSingleKeyScanOptions(uint64_t object_size) {
+  rocksdb::ReadOptions read_options = storage->DefaultSingleKeyScanOptions(object_size);
   if (txn_context_enabled) read_options.snapshot = GetSnapshot();
   return read_options;
 }

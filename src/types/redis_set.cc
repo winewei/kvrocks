@@ -158,7 +158,7 @@ rocksdb::Status Set::Members(engine::Context &ctx, const Slice &user_key, std::v
   std::string prefix = InternalKey(ns_key, "", metadata.version, storage_->IsSlotIdEncoded()).Encode();
   std::string next_version_prefix = InternalKey(ns_key, "", metadata.version + 1, storage_->IsSlotIdEncoded()).Encode();
 
-  rocksdb::ReadOptions read_options = ctx.DefaultSingleKeyScanOptions();
+  rocksdb::ReadOptions read_options = ctx.DefaultSingleKeyScanOptions(metadata.size);
   rocksdb::Slice upper_bound(next_version_prefix);
   read_options.iterate_upper_bound = &upper_bound;
 

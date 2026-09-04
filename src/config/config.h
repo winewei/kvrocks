@@ -262,6 +262,7 @@ struct Config {
 
     struct ReadOptions {
       bool async_io;
+      bool single_key_scan_fill_cache;
     } read_options;
   } rocks_db;
 

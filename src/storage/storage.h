@@ -262,6 +262,11 @@ class Storage {
 
   const rocksdb::WriteOptions &DefaultWriteOptions() const { return default_write_opts_; }
   rocksdb::ReadOptions DefaultScanOptions() const;
+  /// DefaultSingleKeyScanOptions is for iterators bounded to the sub keys of one
+  /// user key (e.g. HGETALL, SMEMBERS). Unlike DefaultScanOptions, whether the
+  /// data blocks are inserted into the block cache is controlled by
+  /// rocksdb.read_options.single_key_scan_fill_cache.
+  rocksdb::ReadOptions DefaultSingleKeyScanOptions() const;
   rocksdb::ReadOptions DefaultMultiGetOptions() const;
 
   [[nodiscard]] rocksdb::Status Write(engine::Context &ctx, const rocksdb::WriteOptions &options,
@@ -401,6 +406,9 @@ class Storage {
 
   // rocksdb used global block cache
   std::shared_ptr<rocksdb::Cache> shared_block_cache_;
+  // Block cache of the metadata column family. Points to shared_block_cache_
+  // unless rocksdb.share_metadata_and_subkey_block_cache is disabled.
+  std::shared_ptr<rocksdb::Cache> metadata_block_cache_;
 
   rocksdb::Status writeToDB(engine::Context &ctx, const rocksdb::WriteOptions &options, rocksdb::WriteBatch *updates);
   void recordKeyspaceStat(const rocksdb::ColumnFamilyHandle *column_family, const rocksdb::Status &s);
@@ -441,6 +449,10 @@ struct Context {
   /// then its snapshot is specified by the Context.
   /// Otherwise it is the same as Storage::DefaultScanOptions().
   [[nodiscard]] rocksdb::ReadOptions DefaultScanOptions();
+  /// DefaultSingleKeyScanOptions returns a DefaultSingleKeyScanOptions, and if txn_context_enabled = true,
+  /// then its snapshot is specified by the Context.
+  /// Otherwise it is the same as Storage::DefaultSingleKeyScanOptions().
+  [[nodiscard]] rocksdb::ReadOptions DefaultSingleKeyScanOptions();
   /// DefaultMultiGetOptions returns a DefaultMultiGetOptions, and if txn_context_enabled = true,
   /// then its snapshot is specified by the Context.
   /// Otherwise it is the same as Storage::DefaultMultiGetOptions

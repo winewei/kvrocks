@@ -334,7 +334,7 @@ rocksdb::Status Hash::RangeByLex(engine::Context &ctx, const Slice &user_key, co
   std::string prefix_key = InternalKey(ns_key, "", metadata.version, storage_->IsSlotIdEncoded()).Encode();
   std::string next_version_prefix_key =
       InternalKey(ns_key, "", metadata.version + 1, storage_->IsSlotIdEncoded()).Encode();
-  rocksdb::ReadOptions read_options = ctx.DefaultScanOptions();
+  rocksdb::ReadOptions read_options = ctx.DefaultSingleKeyScanOptions();
   rocksdb::Slice upper_bound(next_version_prefix_key);
   read_options.iterate_upper_bound = &upper_bound;
   rocksdb::Slice lower_bound(prefix_key);
@@ -388,7 +388,7 @@ rocksdb::Status Hash::GetAll(engine::Context &ctx, const Slice &user_key, std::v
   std::string next_version_prefix_key =
       InternalKey(ns_key, "", metadata.version + 1, storage_->IsSlotIdEncoded()).Encode();
 
-  rocksdb::ReadOptions read_options = ctx.DefaultScanOptions();
+  rocksdb::ReadOptions read_options = ctx.DefaultSingleKeyScanOptions();
   rocksdb::Slice upper_bound(next_version_prefix_key);
   read_options.iterate_upper_bound = &upper_bound;
 

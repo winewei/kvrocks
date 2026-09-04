@@ -1097,3 +1097,67 @@ func TestHashWithAsyncIODisabled(t *testing.T) {
 		require.Len(t, rdb.HVals(ctx, testKey).Val(), 50)
 	})
 }
+
+func TestHashWithSingleKeyScanFillCache(t *testing.T) {
+	srv := util.StartServer(t, map[string]string{
+		"rocksdb.read_options.single_key_scan_fill_cache": "yes",
+		"rocksdb.share_metadata_and_subkey_block_cache":   "no",
+		"rocksdb.metadata_block_cache_size":               "64",
+		"rocksdb.subkey_block_cache_size":                 "64",
+	})
+	defer srv.Close()
+
+	rdb := srv.NewClient()
+	defer func() { require.NoError(t, rdb.Close()) }()
+
+	ctx := context.Background()
+
+	t.Run("HGETALL results are identical before and after flush/compaction", func(t *testing.T) {
+		expected := make(map[string]map[string]string)
+		for i := 0; i < 200; i++ {
+			key := fmt.Sprintf("small-hash-%d", i)
+			fields := map[string]string{}
+			for j := 0; j < 1+i%5; j++ {
+				fields[fmt.Sprintf("f%d", j)] = util.RandString(8, 32, util.Alpha)
+			}
+			expected[key] = fields
+			require.NoError(t, rdb.HSet(ctx, key, fields).Err())
+		}
+		for key, fields := range expected {
+			require.EqualValues(t, fields, rdb.HGetAll(ctx, key).Val())
+		}
+
+		require.NoError(t, rdb.Do(ctx, "COMPACT").Err())
+		time.Sleep(2 * time.Second)
+
+		for key, fields := range expected {
+			// The second read of the same key is served from the block cache after
+			// the first read filled it; both must return the same content.
+			require.EqualValues(t, fields, rdb.HGetAll(ctx, key).Val())
+			require.EqualValues(t, fields, rdb.HGetAll(ctx, key).Val())
+			require.Len(t, rdb.HKeys(ctx, key).Val(), len(fields))
+		}
+	})
+
+	t.Run("overwriting an existing hash still reports added count correctly", func(t *testing.T) {
+		key := "small-hash-overwrite"
+		require.EqualValues(t, 2, rdb.HSet(ctx, key, "a", "1", "b", "2").Val())
+		require.EqualValues(t, 1, rdb.HSet(ctx, key, "a", "1", "b", "3", "c", "4").Val())
+		require.EqualValues(t, map[string]string{"a": "1", "b": "3", "c": "4"}, rdb.HGetAll(ctx, key).Val())
+		require.EqualValues(t, 3, rdb.HLen(ctx, key).Val())
+	})
+
+	t.Run("option is switchable at runtime", func(t *testing.T) {
+		require.NoError(t, rdb.ConfigSet(ctx, "rocksdb.read_options.single_key_scan_fill_cache", "no").Err())
+		val := rdb.ConfigGet(ctx, "rocksdb.read_options.single_key_scan_fill_cache").Val()
+		require.EqualValues(t, "no", val["rocksdb.read_options.single_key_scan_fill_cache"])
+		require.Len(t, rdb.HGetAll(ctx, "small-hash-overwrite").Val(), 3)
+		require.NoError(t, rdb.ConfigSet(ctx, "rocksdb.read_options.single_key_scan_fill_cache", "yes").Err())
+		require.Len(t, rdb.HGetAll(ctx, "small-hash-overwrite").Val(), 3)
+	})
+
+	t.Run("INFO reports the dedicated metadata block cache", func(t *testing.T) {
+		info := rdb.Info(ctx, "rocksdb").Val()
+		require.Contains(t, info, "block_cache_usage[metadata]")
+	})
+}

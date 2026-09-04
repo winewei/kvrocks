@@ -324,6 +324,8 @@ Config::Config() {
 
       /* rocksdb read options */
       {"rocksdb.read_options.async_io", false, new YesNoField(&rocks_db.read_options.async_io, true)},
+      {"rocksdb.read_options.single_key_scan_fill_cache", false,
+       new YesNoField(&rocks_db.read_options.single_key_scan_fill_cache, false)},
   };
   for (auto &wrapper : fields) {
     auto &field = wrapper.field;

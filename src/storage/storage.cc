@@ -94,6 +94,7 @@ Storage::~Storage() {
 void Storage::TrySkipBlockCacheDeallocationOnClose() {
   if (config_->skip_block_cache_deallocation_on_close) {
     shared_block_cache_->DisownData();
+    if (metadata_block_cache_ != shared_block_cache_) metadata_block_cache_->DisownData();
   }
 }
 
@@ -123,6 +124,13 @@ rocksdb::ReadOptions Storage::DefaultScanOptions() const {
   rocksdb::ReadOptions read_options;
   read_options.fill_cache = false;
   read_options.async_io = config_->rocks_db.read_options.async_io;
+
+  return read_options;
+}
+
+rocksdb::ReadOptions Storage::DefaultSingleKeyScanOptions() const {
+  rocksdb::ReadOptions read_options = DefaultScanOptions();
+  read_options.fill_cache = config_->rocks_db.read_options.single_key_scan_fill_cache;
 
   return read_options;
 }
@@ -302,16 +310,26 @@ Status Storage::Open(DBOpenMode mode) {
     }
   }
 
-  if (config_->rocks_db.block_cache_type == BlockCacheType::kCacheTypeLRU) {
-    shared_block_cache_ = rocksdb::NewLRUCache(block_cache_size, kRocksdbLRUAutoAdjustShardBits,
-                                               kRocksdbCacheStrictCapacityLimit, kRocksdbLRUBlockCacheHighPriPoolRatio);
+  auto new_block_cache = [this](size_t capacity) -> std::shared_ptr<rocksdb::Cache> {
+    if (config_->rocks_db.block_cache_type == BlockCacheType::kCacheTypeLRU) {
+      return rocksdb::NewLRUCache(capacity, kRocksdbLRUAutoAdjustShardBits, kRocksdbCacheStrictCapacityLimit,
+                                  kRocksdbLRUBlockCacheHighPriPoolRatio);
+    }
+    rocksdb::HyperClockCacheOptions hcc_cache_options(capacity, kRockdbHCCAutoAdjustCharge);
+    return hcc_cache_options.MakeSharedCache();
+  };
+  if (config_->rocks_db.share_metadata_and_subkey_block_cache) {
+    shared_block_cache_ = new_block_cache(block_cache_size);
+    metadata_block_cache_ = shared_block_cache_;
   } else {
-    rocksdb::HyperClockCacheOptions hcc_cache_options(block_cache_size, kRockdbHCCAutoAdjustCharge);
-    shared_block_cache_ = hcc_cache_options.MakeSharedCache();
+    // Dedicated caches keep the small, hot metadata blocks from being evicted
+    // by the much larger subkey working set. block_cache_size is ignored here.
+    shared_block_cache_ = new_block_cache(subkey_block_cache_size);
+    metadata_block_cache_ = new_block_cache(metadata_block_cache_size);
   }
 
   rocksdb::BlockBasedTableOptions metadata_table_opts = InitTableOptions();
-  metadata_table_opts.block_cache = shared_block_cache_;
+  metadata_table_opts.block_cache = metadata_block_cache_;
   metadata_table_opts.pin_l0_filter_and_index_blocks_in_cache = true;
   metadata_table_opts.cache_index_and_filter_blocks = cache_index_and_filter_blocks;
   metadata_table_opts.cache_index_and_filter_blocks_with_high_priority = true;
@@ -851,7 +869,10 @@ rocksdb::Status Storage::ingestSST(rocksdb::ColumnFamilyHandle *cf_handle,
   return db_->IngestExternalFile(cf_handle, sst_file_names, options);
 }
 
-void Storage::FlushBlockCache() { shared_block_cache_->EraseUnRefEntries(); }
+void Storage::FlushBlockCache() {
+  shared_block_cache_->EraseUnRefEntries();
+  if (metadata_block_cache_ != shared_block_cache_) metadata_block_cache_->EraseUnRefEntries();
+}
 
 Status Storage::ReplicaApplyWriteBatch(rocksdb::WriteBatch *batch, const rocksdb::WriteOptions &options) {
   return applyWriteBatch(options, batch);
@@ -1403,6 +1424,12 @@ bool Storage::ReplDataManager::FileExists(Storage *storage, const std::string &d
 
 [[nodiscard]] rocksdb::ReadOptions Context::DefaultScanOptions() {
   rocksdb::ReadOptions read_options = storage->DefaultScanOptions();
+  if (txn_context_enabled) read_options.snapshot = GetSnapshot();
+  return read_options;
+}
+
+[[nodiscard]] rocksdb::ReadOptions Context::DefaultSingleKeyScanOptions() {
+  rocksdb::ReadOptions read_options = storage->DefaultSingleKeyScanOptions();
   if (txn_context_enabled) read_options.snapshot = GetSnapshot();
   return read_options;
 }

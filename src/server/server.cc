@@ -1026,6 +1026,13 @@ Server::InfoEntries Server::GetRocksDBInfo() {
     entries.emplace_back("block_cache_usage", block_cache_usage);
     db->GetIntProperty(subkey_cf_handle, rocksdb::DB::Properties::kBlockCachePinnedUsage, &block_cache_pinned_usage);
     entries.emplace_back("block_cache_pinned_usage[" + subkey_cf_handle->GetName() + "]", block_cache_pinned_usage);
+    if (!config_->rocks_db.share_metadata_and_subkey_block_cache) {
+      // The metadata column family owns a dedicated block cache, report it separately.
+      uint64_t metadata_block_cache_usage = 0;
+      auto metadata_cf_handle = storage->GetCFHandle(ColumnFamilyID::Metadata);
+      db->GetIntProperty(metadata_cf_handle, rocksdb::DB::Properties::kBlockCacheUsage, &metadata_block_cache_usage);
+      entries.emplace_back("block_cache_usage[" + metadata_cf_handle->GetName() + "]", metadata_block_cache_usage);
+    }
 
     // All column faimilies share the same property of the DB, so it's good to count a single one.
     db->GetIntProperty(subkey_cf_handle, rocksdb::DB::Properties::kNumSnapshots, &num_snapshots);

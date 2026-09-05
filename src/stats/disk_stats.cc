@@ -79,6 +79,7 @@ rocksdb::Status Disk::GetHashSize(engine::Context &ctx, const Slice &ns_key, uin
   HashMetadata metadata(false);
   rocksdb::Status s = Database::GetMetadata(ctx, {kRedisHash}, ns_key, &metadata);
   if (!s.ok()) return s.IsNotFound() ? rocksdb::Status::OK() : s;
+  if (metadata.IsInline()) return GetStringSize(ns_key, key_size);
   return GetApproximateSizes(metadata, ns_key, storage_->GetCFHandle(ColumnFamilyID::PrimarySubkey), key_size);
 }
 

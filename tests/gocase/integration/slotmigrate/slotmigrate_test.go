@@ -1385,3 +1385,124 @@ func TestSlotRangeMigrate(t *testing.T) {
 	})
 
 }
+
+func TestSlotMigrateInlineHash(t *testing.T) {
+	ctx := context.Background()
+
+	srv0 := util.StartServer(t, map[string]string{"cluster-enabled": "yes", "hash-inline-enabled": "yes"})
+	defer func() { srv0.Close() }()
+	rdb0 := srv0.NewClient()
+	defer func() { require.NoError(t, rdb0.Close()) }()
+	id0 := "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx00"
+	require.NoError(t, rdb0.Do(ctx, "clusterx", "SETNODEID", id0).Err())
+
+	// The destination runs without the option: it must still accept both the
+	// restore commands and the raw inline metadata.
+	srv1 := util.StartServer(t, map[string]string{"cluster-enabled": "yes"})
+	defer func() { srv1.Close() }()
+	rdb1 := srv1.NewClient()
+	defer func() { require.NoError(t, rdb1.Close()) }()
+	id1 := "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx01"
+	require.NoError(t, rdb1.Do(ctx, "clusterx", "SETNODEID", id1).Err())
+
+	clusterNodes := fmt.Sprintf("%s %s %d master - 0-10000\n", id0, srv0.Host(), srv0.Port())
+	clusterNodes += fmt.Sprintf("%s %s %d master - 10001-16383", id1, srv1.Host(), srv1.Port())
+	require.NoError(t, rdb0.Do(ctx, "clusterx", "SETNODES", clusterNodes, "1").Err())
+	require.NoError(t, rdb1.Do(ctx, "clusterx", "SETNODES", clusterNodes, "1").Err())
+
+	encodingOf := func(rdb *redis.Client, key string) string {
+		infos, err := rdb.Do(ctx, "OBJECT", "DUMP", key).Slice()
+		require.NoError(t, err)
+		for i := 0; i+1 < len(infos); i += 2 {
+			if infos[i] == "encoding" {
+				return infos[i+1].(string)
+			}
+		}
+		return ""
+	}
+
+	migrateInlineHashes := func(t *testing.T, migrateType SlotMigrationType) {
+		require.NoError(t, rdb0.ConfigSet(ctx, "migrate-type", string(migrateType)).Err())
+		testSlot += 1
+		slotKey := util.SlotTable[testSlot]
+		key := func(name string) string { return fmt.Sprintf("%s_{%s}", name, slotKey) }
+
+		// Snapshot phase: an inline hash with TTL, an inline hash without TTL and a large sub-key hash.
+		require.NoError(t, rdb0.HSet(ctx, key("inline"), "b", "2", "a", "1", "c", "").Err())
+		require.NoError(t, rdb0.Expire(ctx, key("inline"), 100*time.Second).Err())
+		require.NoError(t, rdb0.HSet(ctx, key("inline2"), "x", "\x00bin\xff", "", "empty").Err())
+		large := map[string]string{}
+		for i := 0; i < 20; i++ {
+			large[fmt.Sprintf("f%02d", i)] = fmt.Sprintf("v%d", i)
+		}
+		require.NoError(t, rdb0.HSet(ctx, key("large"), large).Err())
+		require.Equal(t, "inline", encodingOf(rdb0, key("inline")))
+		require.Equal(t, "subkey", encodingOf(rdb0, key("large")))
+		// A sub-key hash that gets converted to inline while the slot is migrating.
+		require.NoError(t, rdb0.ConfigSet(ctx, "hash-inline-enabled", "no").Err())
+		require.NoError(t, rdb0.HSet(ctx, key("convert"), "a", "1", "b", "2").Err())
+		require.NoError(t, rdb0.ConfigSet(ctx, "hash-inline-enabled", "yes").Err())
+		require.Equal(t, "subkey", encodingOf(rdb0, key("convert")))
+
+		// Enough keys in the slot to keep the snapshot phase busy for a few seconds at
+		// this speed, so the writes below are shipped through the WAL phase.
+		for i := 0; i < 800; i++ {
+			require.NoError(t, rdb0.Set(ctx, key(fmt.Sprintf("filler-%d", i)), "x", 0).Err())
+		}
+		require.NoError(t, rdb0.ConfigSet(ctx, "migrate-speed", "256").Err())
+		defer func() { require.NoError(t, rdb0.ConfigSet(ctx, "migrate-speed", "4096").Err()) }()
+		require.Equal(t, "OK", rdb0.Do(ctx, "clusterx", "migrate", testSlot, id1).Val())
+
+		// Incremental (WAL) phase: create, update, shrink, delete and convert inline hashes.
+		require.NoError(t, rdb0.HSet(ctx, key("wal-new"), "k1", "v1", "k2", "v2").Err())
+		require.NoError(t, rdb0.HSet(ctx, key("inline"), "a", "10", "d", "4").Err())
+		require.EqualValues(t, 1, rdb0.HDel(ctx, key("inline"), "b").Val())
+		require.EqualValues(t, 1, rdb0.HIncrBy(ctx, key("inline2"), "n", 1).Val())
+		require.NoError(t, rdb0.HSet(ctx, key("wal-gone"), "a", "1").Err())
+		require.EqualValues(t, 1, rdb0.HDel(ctx, key("wal-gone"), "a").Val())
+		require.NoError(t, rdb0.HSet(ctx, key("convert"), "a", "100", "b", "2", "c", "3").Err())
+		require.Equal(t, "inline", encodingOf(rdb0, key("convert")))
+		// Promote an inline hash past the field limit during the WAL phase.
+		promoted := map[string]string{"k1": "v1", "k2": "v2"}
+		for i := 0; i < 9; i++ {
+			promoted[fmt.Sprintf("p%d", i)] = "p"
+		}
+		require.NoError(t, rdb0.HSet(ctx, key("wal-new"), promoted).Err())
+		require.Equal(t, "subkey", encodingOf(rdb0, key("wal-new")))
+
+		expected := map[string]map[string]string{}
+		for _, name := range []string{"inline", "inline2", "large", "convert", "wal-new"} {
+			expected[name] = rdb0.HGetAll(ctx, key(name)).Val()
+		}
+		require.Equal(t, map[string]string{"a": "10", "c": "", "d": "4"}, expected["inline"])
+		require.Equal(t, map[string]string{"a": "100", "b": "2", "c": "3"}, expected["convert"])
+
+		// The writes above must have happened while the snapshot was still being sent.
+		requireMigrateState(t, rdb0, testSlot, SlotMigrationStateStarted)
+		waitForMigrateStateInDuration(t, rdb0, testSlot, SlotMigrationStateSuccess, time.Minute)
+
+		for name, fields := range expected {
+			require.Equal(t, fields, rdb1.HGetAll(ctx, key(name)).Val(), "%s via %s", name, migrateType)
+			require.EqualValues(t, len(fields), rdb1.HLen(ctx, key(name)).Val())
+		}
+		require.EqualValues(t, 0, rdb1.Exists(ctx, key("wal-gone")).Val())
+		util.BetweenValues(t, rdb1.TTL(ctx, key("inline")).Val(), time.Second, 100*time.Second)
+		require.Equal(t, time.Duration(-1), rdb1.TTL(ctx, key("inline2")).Val())
+		if migrateType == MigrationTypeRawKeyValue {
+			// Raw migration copies the metadata verbatim, so the layout survives.
+			require.Equal(t, "inline", encodingOf(rdb1, key("convert")))
+		}
+		// The destination keeps serving and updating the migrated hashes.
+		require.EqualValues(t, 1, rdb1.HSet(ctx, key("inline"), "e", "5").Val())
+		require.Equal(t, "5", rdb1.HGet(ctx, key("inline"), "e").Val())
+		require.ErrorContains(t, rdb0.Exists(ctx, key("inline")).Err(), "MOVED")
+	}
+
+	t.Run("MIGRATE - inline hashes with redis-command", func(t *testing.T) {
+		migrateInlineHashes(t, MigrationTypeRedisCommand)
+	})
+
+	t.Run("MIGRATE - inline hashes with raw-key-value", func(t *testing.T) {
+		migrateInlineHashes(t, MigrationTypeRawKeyValue)
+	})
+}

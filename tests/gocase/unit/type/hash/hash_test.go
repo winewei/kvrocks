@@ -64,6 +64,11 @@ func TestHash(t *testing.T) {
 			Options:    []string{"yes", "no"},
 			ConfigType: util.YesNo,
 		},
+		{
+			Name:       "hash-inline-enabled",
+			Options:    []string{"yes", "no"},
+			ConfigType: util.YesNo,
+		},
 	}
 
 	configsMatrix, err := util.GenerateConfigsMatrix(configOptions)

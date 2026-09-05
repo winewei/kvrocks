@@ -26,6 +26,7 @@
 #include "server/redis_reply.h"
 #include "server/server.h"
 #include "types/redis_bitmap.h"
+#include "types/redis_hash.h"
 
 void WriteBatchExtractor::LogData(const rocksdb::Slice &blob) {
   // Currently, we only have two kinds of log data
@@ -79,6 +80,26 @@ rocksdb::Status WriteBatchExtractor::PutCF(uint32_t column_family_id, const Slic
       if (metadata.expire > 0) {
         command_args = {"PEXPIREAT", user_key, std::to_string(metadata.expire)};
         resp_commands_[ns].emplace_back(redis::ArrayOfBulkStrings(command_args));
+      }
+    } else if (metadata.IsInlineHash()) {
+      // The metadata value is the whole hash, so replace the destination key with it.
+      Slice payload(value.data() + Metadata::GetOffsetAfterSize(value[0]),
+                    value.size() - Metadata::GetOffsetAfterSize(value[0]));
+      std::vector<FieldValue> field_values;
+      s = redis::DecodeInlineHashFields(payload, metadata.size, &field_values);
+      if (!s.ok()) return s;
+      resp_commands_[ns].emplace_back(redis::ArrayOfBulkStrings({"DEL", user_key}));
+      if (!field_values.empty()) {
+        command_args = {"HMSET", user_key};
+        for (const auto &fv : field_values) {
+          command_args.emplace_back(fv.field);
+          command_args.emplace_back(fv.value);
+        }
+        resp_commands_[ns].emplace_back(redis::ArrayOfBulkStrings(command_args));
+        if (metadata.expire > 0) {
+          command_args = {"PEXPIREAT", user_key, std::to_string(metadata.expire)};
+          resp_commands_[ns].emplace_back(redis::ArrayOfBulkStrings(command_args));
+        }
       }
     } else if (metadata.expire > 0) {
       auto args = log_data_.GetArguments();

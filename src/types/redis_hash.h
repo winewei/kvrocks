@@ -41,6 +41,11 @@ enum class HashFetchType { kAll = 0, kOnlyKey = 1, kOnlyValue = 2 };
 
 namespace redis {
 
+// Codec of the inline hash payload that follows an inline HashMetadata header,
+// see HashMetadata for the layout. `field_values` must be sorted bytewise by field.
+void EncodeInlineHashFields(const std::vector<FieldValue> &field_values, std::string *dst);
+rocksdb::Status DecodeInlineHashFields(Slice payload, uint64_t size, std::vector<FieldValue> *field_values);
+
 class Hash : public SubKeyScanner {
  public:
   Hash(engine::Storage *storage, const std::string &ns) : SubKeyScanner(storage, ns) {}
@@ -71,6 +76,16 @@ class Hash : public SubKeyScanner {
 
  private:
   rocksdb::Status GetMetadata(engine::Context &ctx, const Slice &ns_key, HashMetadata *metadata);
+  // Also returns the inline fields (sorted by field) when the hash uses the inline layout.
+  rocksdb::Status GetMetadata(engine::Context &ctx, const Slice &ns_key, HashMetadata *metadata,
+                              std::vector<FieldValue> *inline_fields);
+
+  bool inlineLayoutEnabled() const;
+  bool fitsInline(const std::vector<FieldValue> &field_values, std::string *encoded) const;
+  // Writes the hash with the layout that matches its size: inline when it fits,
+  // otherwise one sub key per field (promotion from the inline layout).
+  rocksdb::Status writeInlineOrPromote(rocksdb::WriteBatchBase *batch, const Slice &ns_key, HashMetadata *metadata,
+                                       const std::vector<FieldValue> &field_values);
 
   friend struct FieldValueRetriever;
 };

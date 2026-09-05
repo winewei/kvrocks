@@ -130,10 +130,15 @@ StatusOr<kqir::Value> FieldValueRetriever::Retrieve(engine::Context &ctx, std::s
                                                     const redis::IndexFieldMetadata *type) {
   if (std::holds_alternative<HashData>(db)) {
     auto &[hash, metadata, key] = std::get<HashData>(db);
-    std::string ns_key = hash.AppendNamespacePrefix(key);
-    std::string sub_key = InternalKey(ns_key, field, metadata.version, hash.storage_->IsSlotIdEncoded()).Encode();
     std::string value;
-    auto s = hash.storage_->Get(ctx, ctx.GetReadOptions(), sub_key, &value);
+    rocksdb::Status s;
+    if (metadata.IsInline()) {
+      s = hash.Get(ctx, key, field, &value);
+    } else {
+      std::string ns_key = hash.AppendNamespacePrefix(key);
+      std::string sub_key = InternalKey(ns_key, field, metadata.version, hash.storage_->IsSlotIdEncoded()).Encode();
+      s = hash.storage_->Get(ctx, ctx.GetReadOptions(), sub_key, &value);
+    }
     if (s.IsNotFound()) return {Status::NotFound, s.ToString()};
     if (!s.ok()) return {Status::NotOK, s.ToString()};
 

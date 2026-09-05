@@ -135,6 +135,8 @@ class SlotMigrator : public redis::Database {
   Status migrateSimpleKey(const rocksdb::Slice &key, const Metadata &metadata, const std::string &bytes,
                           std::string *restore_cmds);
   Status migrateComplexKey(const rocksdb::Slice &key, const Metadata &metadata, std::string *restore_cmds);
+  Status migrateInlineHash(const rocksdb::Slice &key, const Metadata &metadata, const std::string &bytes,
+                           std::string *restore_cmds);
   Status migrateStream(const rocksdb::Slice &key, const StreamMetadata &metadata, std::string *restore_cmds);
   Status migrateBitmapKey(const InternalKey &inkey, std::unique_ptr<rocksdb::Iterator> *iter,
                           std::vector<std::string> *user_cmd, std::string *restore_cmds);

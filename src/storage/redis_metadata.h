@@ -142,14 +142,18 @@ class InternalKey {
 };
 
 constexpr uint8_t METADATA_64BIT_ENCODING_MASK = 0x80;
+// Only meaningful for kRedisHash: the fields are stored inline right after the
+// metadata (see HashMetadata) and no sub keys exist for the current version.
+constexpr uint8_t METADATA_HASH_INLINE_MASK = 0x40;
 constexpr uint8_t METADATA_TYPE_MASK = 0x0f;
 
 class Metadata {
  public:
   // metadata flags
-  // <(1-bit) 64bit-common-field-indicator> 0 0 0 <(4-bit) redis-type>
+  // <(1-bit) 64bit-common-field-indicator> <(1-bit) hash-inline-indicator> 0 0 <(4-bit) redis-type>
   // 64bit-common-field-indicator: make `expire` and `size` 64bit instead of 32bit
   // NOTE: `expire` is stored in milliseconds for 64bit, seconds for 32bit
+  // hash-inline-indicator: hash fields are encoded inline after the metadata
   // redis-type: RedisType for the key-value
   uint8_t flags;
 
@@ -198,6 +202,13 @@ class Metadata {
   // e.g. any SingleKVType, RedisStream, RedisBloomFilter
   bool IsEmptyableType() const;
 
+  // return whether this is a hash whose fields are stored inline after the
+  // metadata, in which case there are no sub keys for the current version.
+  bool IsInlineHash() const;
+
+  // Assign a fresh version, orphaning every sub key written under the old one.
+  void RegenerateVersion();
+
   virtual void Encode(std::string *dst) const;
   [[nodiscard]] virtual rocksdb::Status Decode(Slice *input);
   [[nodiscard]] rocksdb::Status Decode(Slice input);
@@ -209,9 +220,23 @@ class Metadata {
   static uint64_t generateVersion();
 };
 
+// Hash metadata has two on-disk layouts sharing the same header:
+//   sub-key layout (flag unset): <header>, one sub key per field in the sub key column family
+//   inline layout  (flag set):   <header><field-1><field-2>...<field-size>, no sub keys
+// Each inline field is <varint32 field-len><field><varint32 value-len><value>, fields are
+// sorted bytewise so the iteration order equals the sub-key layout.
 class HashMetadata : public Metadata {
  public:
   explicit HashMetadata(bool generate_version = true) : Metadata(kRedisHash, generate_version) {}
+
+  bool IsInline() const { return flags & METADATA_HASH_INLINE_MASK; }
+  void SetInline(bool inlined) {
+    if (inlined) {
+      flags |= METADATA_HASH_INLINE_MASK;
+    } else {
+      flags &= ~METADATA_HASH_INLINE_MASK;
+    }
+  }
 };
 
 class SetMetadata : public Metadata {

@@ -498,6 +498,10 @@ rocksdb::Status Database::Dump(engine::Context &ctx, const Slice &user_key, std:
   infos->emplace_back(std::to_string(metadata.size));
   infos->emplace_back("is_64bit_common_field");
   infos->emplace_back(std::to_string(metadata.Is64BitEncoded()));
+  if (metadata.Type() == kRedisHash) {
+    infos->emplace_back("encoding");
+    infos->emplace_back(metadata.IsInlineHash() ? "inline" : "subkey");
+  }
 
   infos->emplace_back("created_at");
   timeval created_at = metadata.Time();

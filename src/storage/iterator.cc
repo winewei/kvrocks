@@ -107,7 +107,7 @@ std::unique_ptr<SubKeyIterator> DBIterator::GetSubKeyIterator() const {
   }
 
   RedisType type = metadata_.Type();
-  if (type == kRedisNone || metadata_.IsSingleKVType()) {
+  if (type == kRedisNone || metadata_.IsSingleKVType() || metadata_.IsInlineHash()) {
     return nullptr;
   }
 

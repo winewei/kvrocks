@@ -337,6 +337,10 @@ bool Metadata::IsEmptyableType() const {
          Type() == kRedisTDigest || Type() == kRedisTimeSeries;
 }
 
+bool Metadata::IsInlineHash() const { return Type() == kRedisHash && (flags & METADATA_HASH_INLINE_MASK); }
+
+void Metadata::RegenerateVersion() { version = generateVersion(); }
+
 bool Metadata::Expired() const { return ExpireAt(util::GetTimeStampMS()); }
 
 ListMetadata::ListMetadata(bool generate_version)

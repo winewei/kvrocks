@@ -130,6 +130,11 @@ struct Config {
   int max_io_mb = 0;
   bool enable_blob_cache = false;
   int max_bitmap_to_string_mb = 16;
+  // Small hashes are written with all fields inline in the metadata value
+  // (see HashMetadata) when enabled and they fit in both limits below.
+  bool hash_inline_enabled = false;
+  int hash_inline_max_fields = 8;
+  int hash_inline_max_bytes = 512;
   bool master_use_repl_port = false;
   bool purge_backup_on_fullsync = false;
   int fullsync_recv_file_delay = 0;

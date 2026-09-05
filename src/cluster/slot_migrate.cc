@@ -33,6 +33,7 @@
 #include "sync_migrate_context.h"
 #include "thread_util.h"
 #include "time_util.h"
+#include "types/redis_hash.h"
 #include "types/redis_stream_base.h"
 
 constexpr std::string_view errFailedToSendCommands = "failed to send commands to restore a key";
@@ -694,10 +695,23 @@ StatusOr<KeyMigrationResult> SlotMigrator::migrateOneKey(const rocksdb::Slice &k
       }
       break;
     }
+    case kRedisHash: {
+      if (metadata.IsInlineHash()) {
+        auto s = migrateInlineHash(key, metadata, bytes, restore_cmds);
+        if (!s.IsOK()) {
+          return s.Prefixed("failed to migrate inline hash key");
+        }
+        break;
+      }
+      auto s = migrateComplexKey(key, metadata, restore_cmds);
+      if (!s.IsOK()) {
+        return s.Prefixed("failed to migrate complex key");
+      }
+      break;
+    }
     case kRedisList:
     case kRedisZSet:
     case kRedisBitmap:
-    case kRedisHash:
     case kRedisSet:
     case kRedisSortedint: {
       auto s = migrateComplexKey(key, metadata, restore_cmds);
@@ -767,6 +781,45 @@ Status SlotMigrator::migrateSimpleKey(const rocksdb::Slice &key, const Metadata 
     return s.Prefixed(errFailedToSendCommands);
   }
 
+  return Status::OK();
+}
+
+Status SlotMigrator::migrateInlineHash(const rocksdb::Slice &key, const Metadata &metadata, const std::string &bytes,
+                                       std::string *restore_cmds) {
+  size_t header_size = Metadata::GetOffsetAfterSize(bytes[0]);
+  std::vector<FieldValue> field_values;
+  if (auto s = redis::DecodeInlineHashFields(Slice(bytes.data() + header_size, bytes.size() - header_size),
+                                             metadata.size, &field_values);
+      !s.ok()) {
+    return {Status::NotOK, s.ToString()};
+  }
+
+  std::vector<std::string> user_cmd = {type_to_cmd[kRedisHash], key.ToString()};
+  int item_count = 0;
+  for (const auto &fv : field_values) {
+    user_cmd.emplace_back(fv.field);
+    user_cmd.emplace_back(fv.value);
+    if (++item_count >= kMaxItemsInCommand) {
+      *restore_cmds += redis::ArrayOfBulkStrings(user_cmd);
+      current_pipeline_size_++;
+      item_count = 0;
+      user_cmd.erase(user_cmd.begin() + 2, user_cmd.end());
+    }
+  }
+  if (item_count > 0) {
+    *restore_cmds += redis::ArrayOfBulkStrings(user_cmd);
+    current_pipeline_size_++;
+  }
+
+  if (metadata.expire > 0) {
+    *restore_cmds += redis::ArrayOfBulkStrings({"PEXPIREAT", key.ToString(), std::to_string(metadata.expire)});
+    current_pipeline_size_++;
+  }
+
+  auto s = sendCmdsPipelineIfNeed(restore_cmds, false);
+  if (!s.IsOK()) {
+    return s.Prefixed(errFailedToSendCommands);
+  }
   return Status::OK();
 }
 

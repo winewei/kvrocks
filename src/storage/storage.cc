@@ -359,6 +359,9 @@ Status Storage::Open(DBOpenMode mode) {
   }
 
   rocksdb::BlockBasedTableOptions metadata_table_opts = InitTableOptions();
+  if (config_->rocks_db.metadata_block_size > 0) {
+    metadata_table_opts.block_size = static_cast<size_t>(config_->rocks_db.metadata_block_size);
+  }
   metadata_table_opts.block_cache = metadata_block_cache_;
   metadata_table_opts.pin_l0_filter_and_index_blocks_in_cache = true;
   metadata_table_opts.cache_index_and_filter_blocks = cache_index_and_filter_blocks;

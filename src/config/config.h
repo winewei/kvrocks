@@ -208,6 +208,10 @@ struct Config {
 
   struct RocksDB {
     int block_size;
+    // Block size of the metadata column family only. 0 means falling back to
+    // block_size, so the subkey column families can use a larger block_size
+    // while the metadata column family keeps a smaller one.
+    int metadata_block_size;
     bool cache_index_and_filter_blocks;
     int block_cache_size;
     BlockCacheType block_cache_type;

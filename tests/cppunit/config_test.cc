@@ -122,6 +122,7 @@ TEST(Config, GetAndSet) {
       {"pidfile", "test.pid"},
       {"supervised", "no"},
       {"rocksdb.block_size", "1234"},
+      {"rocksdb.metadata_block_size", "4096"},
       {"rocksdb.max_background_flushes", "-1"},
       {"rocksdb.wal_ttl_seconds", "10000"},
       {"rocksdb.wal_size_limit_mb", "16"},

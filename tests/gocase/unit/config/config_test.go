@@ -426,6 +426,34 @@ func TestConfigPeriodicCompactionSecondsAndTTL(t *testing.T) {
 	t.Run("Get and Set rocksdb.ttl", testTemplate(t, "rocksdb.ttl"))
 }
 
+func TestConfigMetadataBlockSize(t *testing.T) {
+	t.Parallel()
+	srv := util.StartServer(t, map[string]string{})
+	defer srv.Close()
+
+	ctx := context.Background()
+	rdb := srv.NewClient()
+	defer func() { require.NoError(t, rdb.Close()) }()
+
+	parameter := "rocksdb.metadata_block_size"
+	result, err := rdb.ConfigGet(ctx, parameter).Result()
+	require.NoError(t, err)
+	require.EqualValues(t, "0", result[parameter])
+
+	util.ErrorRegexp(t, rdb.ConfigSet(ctx, parameter, "4096").Err(), ".*Unsupported CONFIG parameter.*")
+
+	srv1 := util.StartServer(t, map[string]string{
+		"rocksdb.metadata_block_size": "4096",
+	})
+	defer srv1.Close()
+
+	rdb1 := srv1.NewClient()
+	defer func() { require.NoError(t, rdb1.Close()) }()
+	result, err = rdb1.ConfigGet(ctx, parameter).Result()
+	require.NoError(t, err)
+	require.EqualValues(t, "4096", result[parameter])
+}
+
 func TestConfigDailyOffpeakTimeUTC(t *testing.T) {
 	t.Parallel()
 	srv := util.StartServer(t, map[string]string{})

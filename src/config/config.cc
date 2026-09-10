@@ -345,6 +345,10 @@ Config::Config() {
        new YesNoField(&rocks_db.read_options.single_key_scan_fill_cache, false)},
       {"rocksdb.read_options.single_key_scan_fill_cache_max_size", false,
        new IntField(&rocks_db.read_options.single_key_scan_fill_cache_max_size, 1024, 0, INT_MAX)},
+      {"rocksdb.read_options.optimize_multiget_for_io", false,
+       new YesNoField(&rocks_db.read_options.optimize_multiget_for_io, false)},
+      {"rocksdb.read_options.adaptive_readahead", false,
+       new YesNoField(&rocks_db.read_options.adaptive_readahead, false)},
   };
   for (auto &wrapper : fields) {
     auto &field = wrapper.field;

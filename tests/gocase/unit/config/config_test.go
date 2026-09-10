@@ -505,6 +505,38 @@ func TestConfigIndexFilterBlockOptions(t *testing.T) {
 	}
 }
 
+func TestConfigMultiGetAsyncIO(t *testing.T) {
+	t.Parallel()
+	srv := util.StartServer(t, map[string]string{})
+	defer srv.Close()
+
+	ctx := context.Background()
+	rdb := srv.NewClient()
+	defer func() { require.NoError(t, rdb.Close()) }()
+
+	for _, parameter := range []string{
+		"rocksdb.read_options.optimize_multiget_for_io",
+		"rocksdb.read_options.adaptive_readahead",
+	} {
+		result, err := rdb.ConfigGet(ctx, parameter).Result()
+		require.NoError(t, err)
+		require.EqualValues(t, "no", result[parameter])
+
+		require.NoError(t, rdb.ConfigSet(ctx, parameter, "yes").Err())
+		result, err = rdb.ConfigGet(ctx, parameter).Result()
+		require.NoError(t, err)
+		require.EqualValues(t, "yes", result[parameter])
+
+		require.NoError(t, rdb.ConfigSet(ctx, parameter, "no").Err())
+	}
+
+	// MultiGet keeps working with the option toggled on, regardless of whether
+	// this build was linked against liburing.
+	require.NoError(t, rdb.ConfigSet(ctx, "rocksdb.read_options.optimize_multiget_for_io", "yes").Err())
+	require.NoError(t, rdb.MSet(ctx, "k1", "v1", "k2", "v2", "k3", "v3").Err())
+	require.Equal(t, []interface{}{"v1", "v2", "v3"}, rdb.MGet(ctx, "k1", "k2", "k3").Val())
+}
+
 func TestConfigDailyOffpeakTimeUTC(t *testing.T) {
 	t.Parallel()
 	srv := util.StartServer(t, map[string]string{})

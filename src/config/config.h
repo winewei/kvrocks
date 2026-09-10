@@ -284,6 +284,8 @@ struct Config {
       bool async_io;
       bool single_key_scan_fill_cache;
       int single_key_scan_fill_cache_max_size;
+      bool optimize_multiget_for_io;
+      bool adaptive_readahead;
     } read_options;
   } rocks_db;
 

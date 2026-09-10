@@ -124,6 +124,7 @@ rocksdb::ReadOptions Storage::DefaultScanOptions() const {
   rocksdb::ReadOptions read_options;
   read_options.fill_cache = false;
   read_options.async_io = config_->rocks_db.read_options.async_io;
+  read_options.adaptive_readahead = config_->rocks_db.read_options.adaptive_readahead;
 
   return read_options;
 }
@@ -140,6 +141,7 @@ rocksdb::ReadOptions Storage::DefaultSingleKeyScanOptions(uint64_t object_size) 
 rocksdb::ReadOptions Storage::DefaultMultiGetOptions() const {
   rocksdb::ReadOptions read_options;
   read_options.async_io = config_->rocks_db.read_options.async_io;
+  read_options.optimize_multiget_for_io = config_->rocks_db.read_options.optimize_multiget_for_io;
 
   return read_options;
 }

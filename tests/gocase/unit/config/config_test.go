@@ -454,6 +454,57 @@ func TestConfigMetadataBlockSize(t *testing.T) {
 	require.EqualValues(t, "4096", result[parameter])
 }
 
+func TestConfigIndexFilterBlockOptions(t *testing.T) {
+	t.Parallel()
+	srv := util.StartServer(t, map[string]string{})
+	defer srv.Close()
+
+	ctx := context.Background()
+	rdb := srv.NewClient()
+	defer func() { require.NoError(t, rdb.Close()) }()
+
+	defaults := map[string]string{
+		"rocksdb.cache_index_and_filter_blocks_with_high_priority": "yes",
+		"rocksdb.pin_l0_filter_and_index_blocks_in_cache":          "yes",
+		"rocksdb.bloom_filter_bits_per_key":                        "10",
+		"rocksdb.filter_policy":                                    "bloom",
+	}
+	for parameter, defaultValue := range defaults {
+		result, err := rdb.ConfigGet(ctx, parameter).Result()
+		require.NoError(t, err)
+		require.EqualValues(t, defaultValue, result[parameter])
+
+		util.ErrorRegexp(t, rdb.ConfigSet(ctx, parameter, defaultValue).Err(), ".*Unsupported CONFIG parameter.*")
+	}
+
+	require.ErrorContains(t, rdb.Do(ctx, "config", "set", "rocksdb.bloom_filter_bits_per_key", "65").Err(), "Unsupported CONFIG parameter")
+
+	overrides := util.StartServer(t, map[string]string{
+		"rocksdb.cache_index_and_filter_blocks_with_high_priority": "no",
+		"rocksdb.pin_l0_filter_and_index_blocks_in_cache":          "no",
+		"rocksdb.bloom_filter_bits_per_key":                        "0",
+		"rocksdb.filter_policy":                                    "ribbon",
+	})
+	defer overrides.Close()
+
+	rdb2 := overrides.NewClient()
+	defer func() { require.NoError(t, rdb2.Close()) }()
+	require.NoError(t, rdb2.Set(ctx, "foo", "bar", 0).Err())
+	require.Equal(t, "bar", rdb2.Get(ctx, "foo").Val())
+
+	overridden := map[string]string{
+		"rocksdb.cache_index_and_filter_blocks_with_high_priority": "no",
+		"rocksdb.pin_l0_filter_and_index_blocks_in_cache":          "no",
+		"rocksdb.bloom_filter_bits_per_key":                        "0",
+		"rocksdb.filter_policy":                                    "ribbon",
+	}
+	for parameter, expected := range overridden {
+		result, err := rdb2.ConfigGet(ctx, parameter).Result()
+		require.NoError(t, err)
+		require.EqualValues(t, expected, result[parameter])
+	}
+}
+
 func TestConfigDailyOffpeakTimeUTC(t *testing.T) {
 	t.Parallel()
 	srv := util.StartServer(t, map[string]string{})

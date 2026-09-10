@@ -73,6 +73,8 @@ const std::vector<ConfigEnum<spdlog::level::level_enum>> slowlog_dump_logfile_le
 
 enum class BlockCacheType { kCacheTypeLRU = 0, kCacheTypeHCC };
 
+enum class FilterPolicyType { kFilterPolicyBloom = 0, kFilterPolicyRibbon };
+
 struct CLIOptions {
   std::string conf_file;
   std::vector<std::pair<std::string, std::string>> cli_options;
@@ -213,6 +215,15 @@ struct Config {
     // while the metadata column family keeps a smaller one.
     int metadata_block_size;
     bool cache_index_and_filter_blocks;
+    // Only applied to the metadata and subkey column families; the other
+    // (pubsub/propagate/search/index) column families don't cache index and
+    // filter blocks at all.
+    bool cache_index_and_filter_blocks_with_high_priority;
+    bool pin_l0_filter_and_index_blocks_in_cache;
+    // Average bits per key for the bloom/ribbon filter. 0 disables filter
+    // construction for every column family.
+    int bloom_filter_bits_per_key;
+    FilterPolicyType filter_policy;
     int block_cache_size;
     BlockCacheType block_cache_type;
     int metadata_block_cache_size;

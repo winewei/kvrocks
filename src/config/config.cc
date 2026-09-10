@@ -93,6 +93,11 @@ const std::vector<ConfigEnum<BlockCacheType>> cache_types{[] {
 const std::vector<ConfigEnum<MigrationType>> migration_types{{"redis-command", MigrationType::kRedisCommand},
                                                              {"raw-key-value", MigrationType::kRawKeyValue}};
 
+const std::vector<ConfigEnum<FilterPolicyType>> filter_policy_types{
+    {"bloom", FilterPolicyType::kFilterPolicyBloom},
+    {"ribbon", FilterPolicyType::kFilterPolicyRibbon},
+};
+
 std::string TrimRocksDbPrefix(std::string s) {
   constexpr std::string_view prefix = "rocksdb.";
   if (!util::StartsWithICase(s, prefix)) return s;
@@ -278,6 +283,14 @@ Config::Config() {
       {"rocksdb.enable_pipelined_write", true, new YesNoField(&rocks_db.enable_pipelined_write, false)},
       {"rocksdb.stats_dump_period_sec", false, new IntField(&rocks_db.stats_dump_period_sec, 0, 0, INT_MAX)},
       {"rocksdb.cache_index_and_filter_blocks", true, new YesNoField(&rocks_db.cache_index_and_filter_blocks, true)},
+      {"rocksdb.cache_index_and_filter_blocks_with_high_priority", true,
+       new YesNoField(&rocks_db.cache_index_and_filter_blocks_with_high_priority, true)},
+      {"rocksdb.pin_l0_filter_and_index_blocks_in_cache", true,
+       new YesNoField(&rocks_db.pin_l0_filter_and_index_blocks_in_cache, true)},
+      {"rocksdb.bloom_filter_bits_per_key", true, new IntField(&rocks_db.bloom_filter_bits_per_key, 10, 0, 64)},
+      {"rocksdb.filter_policy", true,
+       new EnumField<FilterPolicyType>(&rocks_db.filter_policy, filter_policy_types,
+                                       FilterPolicyType::kFilterPolicyBloom)},
       {"rocksdb.block_cache_size", true, new IntField(&rocks_db.block_cache_size, 0, 0, INT_MAX)},
       {"rocksdb.block_cache_type", true,
        new EnumField<BlockCacheType>(&rocks_db.block_cache_type, cache_types, BlockCacheType::kCacheTypeLRU)},

@@ -148,7 +148,14 @@ rocksdb::BlockBasedTableOptions Storage::InitTableOptions() {
   rocksdb::BlockBasedTableOptions table_options;
   table_options.format_version = 5;
   table_options.index_type = rocksdb::BlockBasedTableOptions::IndexType::kTwoLevelIndexSearch;
-  table_options.filter_policy.reset(rocksdb::NewBloomFilterPolicy(10, false));
+  int bits_per_key = config_->rocks_db.bloom_filter_bits_per_key;
+  if (bits_per_key > 0) {
+    if (config_->rocks_db.filter_policy == FilterPolicyType::kFilterPolicyRibbon) {
+      table_options.filter_policy.reset(rocksdb::NewRibbonFilterPolicy(bits_per_key, /*bloom_before_level=*/0));
+    } else {
+      table_options.filter_policy.reset(rocksdb::NewBloomFilterPolicy(bits_per_key, false));
+    }
+  }
   table_options.partition_filters = config_->rocks_db.partition_filters;
   table_options.optimize_filters_for_memory = true;
   table_options.metadata_block_size = 4096;
@@ -363,9 +370,10 @@ Status Storage::Open(DBOpenMode mode) {
     metadata_table_opts.block_size = static_cast<size_t>(config_->rocks_db.metadata_block_size);
   }
   metadata_table_opts.block_cache = metadata_block_cache_;
-  metadata_table_opts.pin_l0_filter_and_index_blocks_in_cache = true;
+  metadata_table_opts.pin_l0_filter_and_index_blocks_in_cache = config_->rocks_db.pin_l0_filter_and_index_blocks_in_cache;
   metadata_table_opts.cache_index_and_filter_blocks = cache_index_and_filter_blocks;
-  metadata_table_opts.cache_index_and_filter_blocks_with_high_priority = true;
+  metadata_table_opts.cache_index_and_filter_blocks_with_high_priority =
+      config_->rocks_db.cache_index_and_filter_blocks_with_high_priority;
 
   rocksdb::ColumnFamilyOptions metadata_opts(options);
   metadata_opts.table_factory.reset(rocksdb::NewBlockBasedTableFactory(metadata_table_opts));
@@ -380,9 +388,10 @@ Status Storage::Open(DBOpenMode mode) {
 
   rocksdb::BlockBasedTableOptions subkey_table_opts = InitTableOptions();
   subkey_table_opts.block_cache = shared_block_cache_;
-  subkey_table_opts.pin_l0_filter_and_index_blocks_in_cache = true;
+  subkey_table_opts.pin_l0_filter_and_index_blocks_in_cache = config_->rocks_db.pin_l0_filter_and_index_blocks_in_cache;
   subkey_table_opts.cache_index_and_filter_blocks = cache_index_and_filter_blocks;
-  subkey_table_opts.cache_index_and_filter_blocks_with_high_priority = true;
+  subkey_table_opts.cache_index_and_filter_blocks_with_high_priority =
+      config_->rocks_db.cache_index_and_filter_blocks_with_high_priority;
   rocksdb::ColumnFamilyOptions subkey_opts(options);
   subkey_opts.table_factory.reset(rocksdb::NewBlockBasedTableFactory(subkey_table_opts));
   subkey_opts.compaction_filter_factory = std::make_shared<SubKeyFilterFactory>(this);

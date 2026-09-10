@@ -402,7 +402,16 @@ Status Storage::Open(DBOpenMode mode) {
       NewCompactOnExpiredTableCollectorFactory(std::string(kPrimarySubkeyColumnFamilyName), 0.3));
   SetBlobDB(&subkey_opts, shared_block_cache_);
 
+  // Without an explicit block_cache, each of the column families below would
+  // otherwise have RocksDB create and own a separate, unaccounted-for 32MB
+  // internal cache (BlockBasedTableOptions::block_cache doc: "If nullptr and
+  // no_block_cache == false, a 32MB internal cache will be created and
+  // used"). Binding them to shared_block_cache_ folds that memory into the
+  // sized, reportable subkey block cache instead.
+  bool share_aux_block_cache = config_->rocks_db.share_block_cache_for_aux_column_families;
+
   rocksdb::BlockBasedTableOptions pubsub_table_opts = InitTableOptions();
+  if (share_aux_block_cache) pubsub_table_opts.block_cache = shared_block_cache_;
   rocksdb::ColumnFamilyOptions pubsub_opts(options);
   pubsub_opts.table_factory.reset(rocksdb::NewBlockBasedTableFactory(pubsub_table_opts));
   pubsub_opts.compaction_filter_factory = std::make_shared<PubSubFilterFactory>();
@@ -410,6 +419,7 @@ Status Storage::Open(DBOpenMode mode) {
   SetBlobDB(&pubsub_opts, shared_block_cache_);
 
   rocksdb::BlockBasedTableOptions propagate_table_opts = InitTableOptions();
+  if (share_aux_block_cache) propagate_table_opts.block_cache = shared_block_cache_;
   rocksdb::ColumnFamilyOptions propagate_opts(options);
   propagate_opts.table_factory.reset(rocksdb::NewBlockBasedTableFactory(propagate_table_opts));
   propagate_opts.compaction_filter_factory = std::make_shared<PropagateFilterFactory>();
@@ -417,6 +427,7 @@ Status Storage::Open(DBOpenMode mode) {
   SetBlobDB(&propagate_opts, shared_block_cache_);
 
   rocksdb::BlockBasedTableOptions search_table_opts = InitTableOptions();
+  if (share_aux_block_cache) search_table_opts.block_cache = shared_block_cache_;
   rocksdb::ColumnFamilyOptions search_opts(options);
   search_opts.table_factory.reset(rocksdb::NewBlockBasedTableFactory(search_table_opts));
   search_opts.compaction_filter_factory = std::make_shared<SearchFilterFactory>(this);
@@ -424,6 +435,7 @@ Status Storage::Open(DBOpenMode mode) {
   SetBlobDB(&search_opts, shared_block_cache_);
 
   rocksdb::BlockBasedTableOptions index_table_opts = InitTableOptions();
+  if (share_aux_block_cache) index_table_opts.block_cache = shared_block_cache_;
   rocksdb::ColumnFamilyOptions index_opts(options);
   index_opts.table_factory.reset(rocksdb::NewBlockBasedTableFactory(index_table_opts));
   index_opts.compaction_filter_factory = std::make_shared<IndexFilterFactory>(this);

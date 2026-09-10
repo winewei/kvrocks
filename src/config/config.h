@@ -229,6 +229,13 @@ struct Config {
     int metadata_block_cache_size;
     int subkey_block_cache_size;
     bool share_metadata_and_subkey_block_cache;
+    // When no (the default), the pubsub/propagate/search/index column
+    // families leave BlockBasedTableOptions.block_cache unset, so RocksDB
+    // creates one dedicated 32MB internal cache per column family instead of
+    // sharing the subkey block cache. When yes, those column families are
+    // bound to the same cache as the subkey column families (default,
+    // zset_score, stream).
+    bool share_block_cache_for_aux_column_families;
     int max_open_files;
     int write_buffer_size;
     int max_write_buffer_number;

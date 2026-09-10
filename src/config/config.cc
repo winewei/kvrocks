@@ -298,6 +298,8 @@ Config::Config() {
       {"rocksdb.metadata_block_cache_size", true, new IntField(&rocks_db.metadata_block_cache_size, 2048, 0, INT_MAX)},
       {"rocksdb.share_metadata_and_subkey_block_cache", true,
        new YesNoField(&rocks_db.share_metadata_and_subkey_block_cache, true)},
+      {"rocksdb.share_block_cache_for_aux_column_families", true,
+       new YesNoField(&rocks_db.share_block_cache_for_aux_column_families, false)},
       {"rocksdb.compaction_readahead_size", false,
        new IntField(&rocks_db.compaction_readahead_size, 2 * MiB, 0, 64 * MiB)},
       {"rocksdb.level0_slowdown_writes_trigger", false,

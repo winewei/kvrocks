@@ -136,6 +136,7 @@ TEST(Config, GetAndSet) {
       {"rocksdb.filter_policy", "ribbon"},
       {"rocksdb.metadata_block_cache_size", "100"},
       {"rocksdb.subkey_block_cache_size", "100"},
+      {"rocksdb.share_block_cache_for_aux_column_families", "yes"},
       {"rocksdb.row_cache_size", "100"},
       {"rocksdb.rate_limiter_auto_tuned", "yes"},
       {"rocksdb.compression_level", "32767"},

@@ -537,6 +537,48 @@ func TestConfigMultiGetAsyncIO(t *testing.T) {
 	require.Equal(t, []interface{}{"v1", "v2", "v3"}, rdb.MGet(ctx, "k1", "k2", "k3").Val())
 }
 
+func TestConfigShareBlockCacheForAuxColumnFamilies(t *testing.T) {
+	t.Parallel()
+	srv := util.StartServer(t, map[string]string{})
+	defer srv.Close()
+
+	ctx := context.Background()
+	rdb := srv.NewClient()
+	defer func() { require.NoError(t, rdb.Close()) }()
+
+	parameter := "rocksdb.share_block_cache_for_aux_column_families"
+	result, err := rdb.ConfigGet(ctx, parameter).Result()
+	require.NoError(t, err)
+	require.EqualValues(t, "no", result[parameter])
+
+	util.ErrorRegexp(t, rdb.ConfigSet(ctx, parameter, "yes").Err(), ".*Unsupported CONFIG parameter.*")
+
+	srv1 := util.StartServer(t, map[string]string{
+		"rocksdb.share_block_cache_for_aux_column_families": "yes",
+	})
+	defer srv1.Close()
+
+	rdb1 := srv1.NewClient()
+	defer func() { require.NoError(t, rdb1.Close()) }()
+	result, err = rdb1.ConfigGet(ctx, parameter).Result()
+	require.NoError(t, err)
+	require.EqualValues(t, "yes", result[parameter])
+
+	// The pubsub, propagate, search and index column families must still work
+	// once bound to the shared block cache instead of their own private one.
+	require.NoError(t, rdb1.Set(ctx, "foo", "bar", 0).Err())
+	require.Equal(t, "bar", rdb1.Get(ctx, "foo").Val())
+
+	sub := rdb1.Subscribe(ctx, "ch")
+	defer func() { require.NoError(t, sub.Close()) }()
+	_, err = sub.Receive(ctx)
+	require.NoError(t, err)
+	require.NoError(t, rdb1.Publish(ctx, "ch", "hello").Err())
+	msg, err := sub.ReceiveTimeout(ctx, 5*time.Second)
+	require.NoError(t, err)
+	require.Equal(t, "hello", msg.(*redis.Message).Payload)
+}
+
 func TestConfigDailyOffpeakTimeUTC(t *testing.T) {
 	t.Parallel()
 	srv := util.StartServer(t, map[string]string{})

@@ -270,6 +270,14 @@ struct Config {
     bool level_compaction_dynamic_level_bytes;
     int max_background_jobs;
     bool rate_limiter_auto_tuned;
+    // Incrementally sync SST (bytes_per_sync) and WAL (wal_bytes_per_sync)
+    // writes every N bytes instead of letting the OS accumulate dirty pages
+    // until a large writeback burst. 0 keeps RocksDB's default (disabled).
+    uint64_t bytes_per_sync = 0;
+    uint64_t wal_bytes_per_sync = 0;
+    // Bypass the page cache for flush and compaction IO so background
+    // writes do not evict data blocks read by foreground requests.
+    bool use_direct_io_for_flush_and_compaction = false;
     bool avoid_unnecessary_blocking_io = true;
     bool partition_filters;
     int64_t max_compaction_bytes;

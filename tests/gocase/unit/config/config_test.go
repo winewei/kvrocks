@@ -607,3 +607,42 @@ func TestConfigDailyOffpeakTimeUTC(t *testing.T) {
 		require.EqualValues(t, "", result[parameter])
 	})
 }
+
+func TestConfigBackgroundIOOptions(t *testing.T) {
+	t.Parallel()
+	srv := util.StartServer(t, map[string]string{})
+	defer srv.Close()
+
+	ctx := context.Background()
+	rdb := srv.NewClient()
+	defer func() { require.NoError(t, rdb.Close()) }()
+
+	defaults := map[string]string{
+		"rocksdb.bytes_per_sync":                          "0",
+		"rocksdb.wal_bytes_per_sync":                      "0",
+		"rocksdb.use_direct_io_for_flush_and_compaction": "no",
+	}
+	for parameter, expected := range defaults {
+		result, err := rdb.ConfigGet(ctx, parameter).Result()
+		require.NoError(t, err)
+		require.EqualValues(t, expected, result[parameter], parameter)
+		util.ErrorRegexp(t, rdb.ConfigSet(ctx, parameter, "1048576").Err(), ".*Unsupported CONFIG parameter.*")
+	}
+
+	srv1 := util.StartServer(t, map[string]string{
+		"rocksdb.bytes_per_sync":     "1048576",
+		"rocksdb.wal_bytes_per_sync": "2097152",
+	})
+	defer srv1.Close()
+
+	rdb1 := srv1.NewClient()
+	defer func() { require.NoError(t, rdb1.Close()) }()
+	result, err := rdb1.ConfigGet(ctx, "rocksdb.bytes_per_sync").Result()
+	require.NoError(t, err)
+	require.EqualValues(t, "1048576", result["rocksdb.bytes_per_sync"])
+	result, err = rdb1.ConfigGet(ctx, "rocksdb.wal_bytes_per_sync").Result()
+	require.NoError(t, err)
+	require.EqualValues(t, "2097152", result["rocksdb.wal_bytes_per_sync"])
+	require.NoError(t, rdb1.Set(ctx, "foo", "bar", 0).Err())
+	require.Equal(t, "bar", rdb1.Get(ctx, "foo").Val())
+}

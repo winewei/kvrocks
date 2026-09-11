@@ -231,6 +231,9 @@ rocksdb::Options Storage::InitRocksDBOptions() {
   options.rate_limiter = rate_limiter_;
   options.delayed_write_rate = static_cast<uint64_t>(config_->rocks_db.delayed_write_rate);
   options.compaction_readahead_size = static_cast<size_t>(config_->rocks_db.compaction_readahead_size);
+  options.bytes_per_sync = config_->rocks_db.bytes_per_sync;
+  options.wal_bytes_per_sync = config_->rocks_db.wal_bytes_per_sync;
+  options.use_direct_io_for_flush_and_compaction = config_->rocks_db.use_direct_io_for_flush_and_compaction;
   options.level0_slowdown_writes_trigger = config_->rocks_db.level0_slowdown_writes_trigger == 0
                                                ? config_->rocks_db.level0_stop_writes_trigger
                                                : config_->rocks_db.level0_slowdown_writes_trigger;

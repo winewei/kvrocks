@@ -618,8 +618,8 @@ func TestConfigBackgroundIOOptions(t *testing.T) {
 	defer func() { require.NoError(t, rdb.Close()) }()
 
 	defaults := map[string]string{
-		"rocksdb.bytes_per_sync":                          "0",
-		"rocksdb.wal_bytes_per_sync":                      "0",
+		"rocksdb.bytes_per_sync":                         "0",
+		"rocksdb.wal_bytes_per_sync":                     "0",
 		"rocksdb.use_direct_io_for_flush_and_compaction": "no",
 	}
 	for parameter, expected := range defaults {
